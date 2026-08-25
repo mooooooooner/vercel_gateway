@@ -1,0 +1,18 @@
+{
+  "name": "vercel-gateway-manager",
+  "version": "1.0.0",
+  "description": "统一管理多个 Vercel AI Gateway key 的负载均衡网关 + OpenAI 兼容代理",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socks-proxy-agent": "^10.1.0"
+  }
+}
