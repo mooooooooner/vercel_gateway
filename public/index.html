@@ -30,6 +30,7 @@
       <!-- 选项卡 -->
       <nav class="tabs">
         <button class="tab active" data-view="keys">Key 管理</button>
+        <button class="tab" data-view="pkeys">代理 Key</button>
         <button class="tab" data-view="params">模型参数</button>
         <button class="tab" data-view="images">图片生成</button>
         <button class="tab" data-view="logs">运行日志</button>
@@ -93,6 +94,56 @@
         · Anthropic：<code id="anthropic-url">/</code>
       </footer>
       </div><!-- /view-keys -->
+
+      <!-- ============ 代理 Key 视图 ============ -->
+      <div id="view-pkeys" hidden>
+        <section class="card params-toolbar">
+          <div>
+            <h2 class="params-title">代理 Key</h2>
+            <p class="hint">
+              客户端调用 <code>/v1</code> 时用 <code>Authorization: Bearer &lt;代理 Key&gt;</code> 鉴权。
+              用量按聊天接口（chat/completions、completions、messages、responses）从上游 usage 统计，
+              缓存命中率 = <code>cached_tokens / prompt_tokens</code>。不含图片与 embeddings。
+            </p>
+          </div>
+        </section>
+
+        <!-- 统计 -->
+        <section class="stats" id="pkey-stats"></section>
+
+        <!-- 工具栏 -->
+        <section class="toolbar card">
+          <div class="toolbar-left">
+            <button class="btn primary" id="btn-pk-add">＋ 添加 / 生成 Key</button>
+            <button class="btn warn ghost" id="btn-pk-reset-stats">↯ 统计清零</button>
+            <button class="btn danger ghost" id="btn-pk-del-selected">🗑 删除选中</button>
+          </div>
+          <div class="toolbar-right">
+            <span id="pk-auth-hint" class="pill muted"></span>
+          </div>
+        </section>
+
+        <!-- Key 列表 -->
+        <section class="card table-card">
+          <table id="pkeys-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="pk-check-all" /></th>
+                <th>名称 / Key</th>
+                <th class="num">请求 / 失败</th>
+                <th class="num">Tokens（入 / 出）</th>
+                <th class="num">消耗 (USD)</th>
+                <th>缓存命中率</th>
+                <th>最近使用</th>
+                <th>启用</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="pkeys-body"></tbody>
+          </table>
+          <div id="pkeys-empty" class="empty" hidden>还没有代理 Key，点击「添加 / 生成 Key」开始。删除全部后 /v1 接口将无鉴权。</div>
+        </section>
+      </div><!-- /view-pkeys -->
 
       <!-- ============ 模型参数视图 ============ -->
       <div id="view-params" hidden>
@@ -225,6 +276,21 @@
     </div>
   </div>
 
+  <!-- 添加代理 Key 弹窗 -->
+  <div class="modal" id="modal-pk-add" hidden>
+    <div class="modal-box">
+      <h2>添加代理 Key</h2>
+      <p class="hint">粘贴自定义 Key（每行一个，或逗号 / 空格分隔，重复自动跳过）；或填随机生成数量，由网关生成 <code>sk-gw-…</code> 格式的 Key。</p>
+      <textarea id="pk-add-text" rows="6" placeholder="sk-my-client-key&#10;sk-another-key"></textarea>
+      <label class="field">名称前缀（可选）<input type="text" id="pk-add-prefix" placeholder="例如 client-a" /></label>
+      <label class="field">随机生成数量（粘贴框为空时生效，最多 50）<input type="number" id="pk-add-generate" min="0" max="50" value="0" /></label>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close>取消</button>
+        <button class="btn primary" id="pk-add-submit">添加</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 图片预览弹窗 -->
   <div class="modal" id="modal-image" hidden>
     <div class="modal-box image-preview-box">
@@ -252,6 +318,6 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <script src="/app.js?v=20260825-image-refs"></script>
+  <script src="/app.js?v=20260904-proxy-keys"></script>
 </body>
 </html>

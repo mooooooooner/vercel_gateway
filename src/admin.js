@@ -1,6 +1,7 @@
 import express from 'express';
 import { config } from './config.js';
 import { store, maskKey } from './store.js';
+import { proxyKeyStore } from './proxy-keys.js';
 import { fetchCredits, forward, runPool } from './gateway.js';
 import { log } from './logger.js';
 import { attachImageRoutes } from './images.js';
@@ -41,6 +42,26 @@ function publicView(k) {
     lastUsed: k.lastUsed,
     cooldownUntil: k.cooldownUntil ?? null,
     createdAt: k.createdAt,
+  };
+}
+
+// 代理 Key 对外视图：带上从 usage 累计出来的消耗与缓存命中率（cached / prompt）。
+function proxyKeyView(k) {
+  const promptTokens = k.promptTokens || 0;
+  return {
+    id: k.id,
+    keyMasked: maskKey(k.key),
+    name: k.name || '',
+    enabled: k.enabled,
+    createdAt: k.createdAt,
+    lastUsed: k.lastUsed,
+    requests: k.requests || 0,
+    failures: k.failures || 0,
+    promptTokens,
+    completionTokens: k.completionTokens || 0,
+    cachedTokens: k.cachedTokens || 0,
+    cost: k.cost || 0,
+    hitRate: promptTokens > 0 ? (k.cachedTokens || 0) / promptTokens : null,
   };
 }
 
@@ -156,6 +177,64 @@ export function createAdminRouter() {
     const k = store.update(req.params.id, patch);
     if (!k) return res.status(404).json({ error: { message: '未找到该 key' } });
     res.json(publicView(k));
+  });
+
+  // ---- 代理 Key（客户端调用 /v1 用的 key，含用量统计）----
+
+  router.get('/proxy-keys', (req, res) => {
+    res.json({ items: proxyKeyStore.list().map(proxyKeyView) });
+  });
+
+  // 批量添加：粘贴 { text } 或随机生成 { generate: n }，可带名称前缀
+  router.post('/proxy-keys', (req, res) => {
+    const { text, keys, namePrefix, generate } = req.body || {};
+    const parsed = parseKeys(keys ?? text);
+    const gen = Math.min(50, Math.max(0, Math.floor(Number(generate) || 0)));
+    if (parsed.length === 0 && gen === 0) {
+      return res.status(400).json({ error: { message: '请粘贴至少一个 key，或填写随机生成数量' } });
+    }
+    const pasted = proxyKeyStore.addMany(parsed, namePrefix || '');
+    const generated = gen > 0 ? proxyKeyStore.generate(gen, namePrefix || '') : { added: 0, items: [] };
+    const added = pasted.added + generated.added;
+    log.info('admin', `代理 Key 新增 ${added} 个（粘贴 ${pasted.added}，生成 ${generated.added}，跳过重复 ${pasted.skipped}）`);
+    res.json({ added, skipped: pasted.skipped, items: [...pasted.items, ...generated.items].map(proxyKeyView) });
+  });
+
+  router.post('/proxy-keys/delete', (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (ids.length === 0) return res.status(400).json({ error: { message: '缺少 ids' } });
+    const removed = proxyKeyStore.remove(ids);
+    log.info('admin', `代理 Key 删除 ${removed} 个`);
+    res.json({ removed });
+  });
+
+  router.delete('/proxy-keys/:id', (req, res) => {
+    const removed = proxyKeyStore.remove([req.params.id]);
+    res.json({ removed });
+  });
+
+  router.patch('/proxy-keys/:id', (req, res) => {
+    const patch = {};
+    if (typeof req.body?.enabled === 'boolean') patch.enabled = req.body.enabled;
+    if (typeof req.body?.name === 'string') patch.name = req.body.name;
+    const k = proxyKeyStore.update(req.params.id, patch);
+    if (!k) return res.status(404).json({ error: { message: '未找到该代理 Key' } });
+    res.json(proxyKeyView(k));
+  });
+
+  // 统计清零：ids 为空则清零全部
+  router.post('/proxy-keys/reset-stats', (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : undefined;
+    const reset = proxyKeyStore.resetStats(ids);
+    log.info('admin', `代理 Key 统计已清零 ${reset} 个`);
+    res.json({ reset });
+  });
+
+  // 查看完整 key（用于复制给客户端配置）
+  router.get('/proxy-keys/:id/reveal', (req, res) => {
+    const k = proxyKeyStore.getById(req.params.id);
+    if (!k) return res.status(404).json({ error: { message: '未找到该代理 Key' } });
+    res.json({ id: k.id, key: k.key });
   });
 
   // 刷新额度（自定义并发）。ids 为空则刷新全部。

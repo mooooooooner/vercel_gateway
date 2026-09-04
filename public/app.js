@@ -4,6 +4,7 @@ const $$ = (s) => document.querySelectorAll(s);
 const state = {
   token: localStorage.getItem('adminToken') || '',
   keys: [],
+  pkeys: [],
   meta: {},
   settings: { strategy: 'round-robin', modelParams: {} },
   paramCards: [],
@@ -69,6 +70,12 @@ $$('[data-close]').forEach((b) => b.addEventListener('click', (e) => e.target.cl
 $$('.modal').forEach((m) => m.addEventListener('click', (e) => { if (e.target === m) m.hidden = true; }));
 
 function fmtMoney(v) { return v === null || v === undefined ? '—' : '$' + Number(v).toFixed(4); }
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
+  return String(n);
+}
 function fmtTime(t) {
   if (!t) return '—';
   const d = new Date(t);
@@ -270,6 +277,173 @@ $('#add-submit').addEventListener('click', async () => {
   } catch (e) { toast(e.message, 'err'); }
 });
 
+// ================= 代理 Key =================
+function hitRateCell(rate) {
+  if (rate === null || rate === undefined) return '<span style="color:var(--ink-faint)">—</span>';
+  const pct = Math.min(100, rate * 100);
+  return `<span class="hitbar"><i style="width:${pct}%"></i></span><span class="mono hitpct">${pct.toFixed(1)}%</span>`;
+}
+
+function renderPkeyStats(items) {
+  const t = items.reduce((acc, k) => {
+    acc.enabled += k.enabled ? 1 : 0;
+    acc.requests += k.requests || 0;
+    acc.promptTokens += k.promptTokens || 0;
+    acc.completionTokens += k.completionTokens || 0;
+    acc.cachedTokens += k.cachedTokens || 0;
+    acc.cost += k.cost || 0;
+    return acc;
+  }, { enabled: 0, requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 });
+  const rate = t.promptTokens > 0 ? t.cachedTokens / t.promptTokens : null;
+  $('#pkey-stats').innerHTML = [
+    ['Key 总数', `${items.length} <small>/ 启用 ${t.enabled}</small>`],
+    ['累计请求', t.requests],
+    ['Tokens 入 / 出', `${fmtTokens(t.promptTokens)} <small>/</small> ${fmtTokens(t.completionTokens)}`],
+    ['累计消耗', `<small>$</small>${t.cost.toFixed(4)}`],
+    ['总体命中率', rate === null ? '—' : `${(rate * 100).toFixed(1)}%`],
+  ].map(([label, value]) => `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div></div>`).join('');
+
+  const hint = $('#pk-auth-hint');
+  if (items.length === 0) {
+    hint.textContent = '⚠ /v1 无鉴权（没有代理 Key）';
+    hint.className = 'pill';
+    hint.style.color = 'var(--red)';
+  } else {
+    hint.textContent = t.enabled > 0 ? '鉴权已启用' : '⚠ 全部已停用，/v1 将全部 401';
+    hint.className = 'pill muted';
+    hint.style.color = t.enabled > 0 ? '' : 'var(--red)';
+  }
+}
+
+function renderProxyKeys() {
+  const body = $('#pkeys-body');
+  const items = state.pkeys;
+  $('#pkeys-empty').hidden = items.length > 0;
+  body.innerHTML = items.map((k) => `
+    <tr data-id="${k.id}">
+      <td class="col-check"><input type="checkbox" class="pk-check" value="${k.id}" /></td>
+      <td class="keycell">
+        <div class="name">${k.name ? escapeHtml(k.name) : '<span style="color:var(--ink-faint)">（未命名）</span>'}</div>
+        <div class="kmask">${k.keyMasked}</div>
+      </td>
+      <td class="num mono">${k.requests} / <span style="color:var(--red)">${k.failures}</span></td>
+      <td class="num mono">${fmtTokens(k.promptTokens)} / ${fmtTokens(k.completionTokens)}</td>
+      <td class="num mono">${k.cost ? '$' + Number(k.cost).toFixed(4) : '—'}</td>
+      <td>${hitRateCell(k.hitRate)}</td>
+      <td>${fmtTime(k.lastUsed)}</td>
+      <td>
+        <label class="switch"><input type="checkbox" class="pk-enable" ${k.enabled ? 'checked' : ''} /><span></span></label>
+      </td>
+      <td style="white-space:nowrap">
+        <button class="btn mini ghost pk-copy">复制</button>
+        <button class="btn mini danger ghost pk-del">删除</button>
+      </td>
+    </tr>`).join('');
+
+  body.querySelectorAll('.pk-del').forEach((b) => b.addEventListener('click', onPkDelete));
+  body.querySelectorAll('.pk-enable').forEach((b) => b.addEventListener('change', onPkToggle));
+  body.querySelectorAll('.pk-copy').forEach((b) => b.addEventListener('click', onPkCopy));
+  $('#pk-check-all').checked = false;
+}
+
+function renderProxyKeysAll() {
+  renderPkeyStats(state.pkeys);
+  renderProxyKeys();
+}
+
+async function loadProxyKeys() {
+  try {
+    const r = await api('/api/proxy-keys');
+    state.pkeys = r.items;
+    renderProxyKeysAll();
+  } catch (e) { if (e.message !== 'unauthorized') toast(e.message, 'err'); }
+}
+
+function pkSelectedIds() { return [...$$('.pk-check:checked')].map((c) => c.value); }
+
+$('#pk-check-all').addEventListener('change', (e) => {
+  $$('.pk-check').forEach((c) => (c.checked = e.target.checked));
+});
+
+$('#btn-pk-add').addEventListener('click', () => {
+  $('#pk-add-text').value = '';
+  $('#pk-add-prefix').value = '';
+  $('#pk-add-generate').value = 0;
+  openModal('modal-pk-add');
+});
+
+$('#pk-add-submit').addEventListener('click', async () => {
+  const text = $('#pk-add-text').value;
+  const gen = Number($('#pk-add-generate').value) || 0;
+  if (!text.trim() && gen <= 0) return toast('请粘贴 Key 或填写随机生成数量');
+  try {
+    const r = await api('/api/proxy-keys', {
+      method: 'POST',
+      body: JSON.stringify({
+        text,
+        namePrefix: $('#pk-add-prefix').value.trim(),
+        generate: text.trim() ? 0 : gen,
+      }),
+    });
+    closeModal('modal-pk-add');
+    toast(`新增 ${r.added} 个${r.skipped ? `，跳过 ${r.skipped} 个重复` : ''}`, 'ok');
+    loadProxyKeys();
+  } catch (e) { toast(e.message, 'err'); }
+});
+
+$('#btn-pk-del-selected').addEventListener('click', async () => {
+  const ids = pkSelectedIds();
+  if (ids.length === 0) return toast('未选中任何代理 Key');
+  if (!confirm(`确定删除选中的 ${ids.length} 个代理 Key？删除后使用该 Key 的客户端将无法调用。`)) return;
+  try {
+    const r = await api('/api/proxy-keys/delete', { method: 'POST', body: JSON.stringify({ ids }) });
+    toast(`已删除 ${r.removed} 个`, 'ok');
+    loadProxyKeys();
+  } catch (e) { toast(e.message, 'err'); }
+});
+
+$('#btn-pk-reset-stats').addEventListener('click', async () => {
+  const ids = pkSelectedIds();
+  const scope = ids.length ? `选中的 ${ids.length} 个` : '全部';
+  if (!confirm(`确定将 ${scope}代理 Key 的用量统计清零？`)) return;
+  try {
+    const r = await api('/api/proxy-keys/reset-stats', { method: 'POST', body: JSON.stringify({ ids }) });
+    toast(`已清零 ${r.reset} 个 Key 的统计`, 'ok');
+    loadProxyKeys();
+  } catch (e) { toast(e.message, 'err'); }
+});
+
+async function onPkDelete(e) {
+  const id = e.target.closest('tr').dataset.id;
+  if (!confirm('确定删除这个代理 Key？')) return;
+  try {
+    await api('/api/proxy-keys/' + id, { method: 'DELETE' });
+    toast('已删除', 'ok');
+    loadProxyKeys();
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+async function onPkToggle(e) {
+  const id = e.target.closest('tr').dataset.id;
+  try {
+    await api('/api/proxy-keys/' + id, { method: 'PATCH', body: JSON.stringify({ enabled: e.target.checked }) });
+    loadProxyKeys();
+  } catch (err) { toast(err.message, 'err'); e.target.checked = !e.target.checked; }
+}
+
+async function onPkCopy(e) {
+  const id = e.target.closest('tr').dataset.id;
+  try {
+    const r = await api(`/api/proxy-keys/${id}/reveal`);
+    try {
+      await navigator.clipboard.writeText(r.key);
+      toast('完整 Key 已复制到剪贴板', 'ok');
+    } catch {
+      window.prompt('复制完整 Key：', r.key); // 非 HTTPS 环境剪贴板不可用时兜底
+    }
+  } catch (err) { if (err.message !== 'unauthorized') toast(err.message, 'err'); }
+}
+
 // 令牌
 $('#btn-token').addEventListener('click', () => { $('#token-input').value = state.token; openModal('modal-token'); });
 $('#token-submit').addEventListener('click', () => {
@@ -297,12 +471,14 @@ $$('.tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset
 function switchView(view) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
   $('#view-keys').hidden = view !== 'keys';
+  $('#view-pkeys').hidden = view !== 'pkeys';
   $('#view-params').hidden = view !== 'params';
   $('#view-images').hidden = view !== 'images';
   $('#view-logs').hidden = view !== 'logs';
   if (view === 'logs') startLogStream();
   if (view === 'params') renderParamCards();
   if (view === 'images') loadImageHistory();
+  if (view === 'pkeys') loadProxyKeys();
 }
 
 function renderParamCards() {

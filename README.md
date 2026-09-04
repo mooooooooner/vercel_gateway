@@ -14,6 +14,7 @@
 - ✅ **负载均衡**：轮询 / 最少使用 / 余额优先 / 低额度优先 / 随机，失败自动切换下一个 Key
 - ✅ **Debug 模式 + 实时日志**：前端「运行日志」选项卡通过 SSE 实时查看每次代理的 key 选择、上游状态、重试与异常；Debug 可在页面随时开关
 - ✅ **图片生成**：管理后台「图片生成」选项卡，默认 `bytedance/seedream-5.0-pro`；可上传参考图走 `/v1/images/edits`，结果落盘到服务器并可回看历史
+- ✅ **代理 Key 管理**：后台「代理 Key」选项卡在线增删 / 启停客户端调用 `/v1` 用的 Key（支持随机生成、完整 Key 复制）；按 Key 统计聊天接口的消耗（tokens + 上游返回的美元 cost）与缓存命中率（`cached_tokens / prompt_tokens`），统计持久化到 `data/proxy-keys.json`
 
 ## 快速开始
 
@@ -34,7 +35,7 @@ npm start
 | --- | --- |
 | `PORT` | 服务端口，默认 `8787` |
 | `ADMIN_TOKEN` | 管理后台 / `/api` 接口令牌。留空则无鉴权 |
-| `PROXY_API_KEYS` | 客户端调用 `/v1` 所需的 Key，逗号分隔多个。留空则不校验 |
+| `PROXY_API_KEYS` | 客户端调用 `/v1` 所需的 Key，逗号分隔多个。**启动时会自动迁移进 `data/proxy-keys.json`**，之后在后台「代理 Key」页管理即可，改 `.env` 不再需要重启。留空且后台也无 Key 则不校验 |
 | `GATEWAY_BASE_URL` | 上游地址，默认 `https://ai-gateway.vercel.sh/v1` |
 | `GATEWAY_CREDITS_URL` | 额度查询地址，默认 `https://ai-gateway.vercel.sh/v1/credits` |
 | `LOW_BALANCE_THRESHOLD` | 判定额度不足的阈值（美元），默认 `0.01` |
@@ -79,6 +80,13 @@ print(resp.choices[0].message.content)
 | POST | `/api/keys/refresh` | 刷新额度 `{ concurrency, ids? }` |
 | POST | `/api/keys/activate` | 激活选中 Key：对每个 key 用 `zai/glm-5.2` 发测试消息 `{ ids, concurrency? }` |
 | POST | `/api/keys/prune` | 清理额度不足 `{ threshold?, concurrency? }` |
+| GET | `/api/proxy-keys` | 代理 Key 列表（脱敏）+ 每个 Key 的用量统计与缓存命中率 |
+| POST | `/api/proxy-keys` | 批量添加 `{ text?, namePrefix?, generate? }`，`generate: n` 随机生成 n 个 |
+| POST | `/api/proxy-keys/delete` | 批量删除 `{ ids }` |
+| DELETE | `/api/proxy-keys/:id` | 删除单个 |
+| PATCH | `/api/proxy-keys/:id` | 启用/停用/改名 |
+| POST | `/api/proxy-keys/reset-stats` | 用量统计清零 `{ ids? }`（留空清零全部） |
+| GET | `/api/proxy-keys/:id/reveal` | 查看完整 Key（用于复制给客户端） |
 | GET | `/api/logs` | 拉取最近日志 |
 | GET | `/api/logs/stream` | 实时日志（SSE，令牌用 `?token=` 传递） |
 | GET/PUT | `/api/debug` | 查询 / 开关 Debug 模式 `{ debug }` |
@@ -89,7 +97,16 @@ print(resp.choices[0].message.content)
 
 ## 数据存储
 
-Key、设置与图片生成历史以 JSON 明文保存在 `data/`（图片文件在 `data/images/`，已在 `.gitignore` 中）。请妥善保管服务器与 `data/` 目录访问权限。
+Key、代理 Key（含用量统计）、设置与图片生成历史以 JSON 明文保存在 `data/`（图片文件在 `data/images/`，已在 `.gitignore` 中）。请妥善保管服务器与 `data/` 目录访问权限。
+
+可用 `DATA_DIR` 环境变量把数据目录指到别处。
+
+## 用量统计说明
+
+- 统计范围：仅聊天接口 `POST /v1/chat/completions`、`/v1/completions`、`/v1/messages`、`/v1/responses`；图片与 embeddings 不计入。
+- 数据来源：上游响应的 `usage` 字段。非流式直接解析 JSON；流式请求会在客户端未指定时注入 `stream_options.include_usage` 并旁路嗅探 SSE 尾块，兼容 OpenAI / Anthropic 字段命名。
+- 缓存命中率 = `cached_tokens / prompt_tokens`（取 `prompt_tokens_details.cached_tokens` 或 `cache_read_input_tokens`）。
+- 消耗 (USD) 取上游返回的 `usage.cost` 等字段，上游未返回时该列显示 `—`，tokens 统计不受影响。
 
 ## 说明
 

@@ -1,17 +1,26 @@
 import express from 'express';
 import { Readable } from 'node:stream';
-import { config } from './config.js';
 import { store, maskKey } from './store.js';
+import { proxyKeyStore } from './proxy-keys.js';
+import { extractUsage, createSseUsageScanner } from './usage.js';
 import { forward } from './gateway.js';
 import { log } from './logger.js';
 
-// 客户端代理鉴权：Authorization: Bearer 或 x-api-key。未配置则放行。
+// 客户端代理鉴权：Authorization: Bearer 或 x-api-key。
+// 代理 Key 由后台页面管理（data/proxy-keys.json，启动时用 .env 的 PROXY_API_KEYS 做种子）。
+// 一个 key 都没有时保持旧行为：放行（/api/meta 会提示「代理无鉴权」）。
 function proxyAuth(req, res, next) {
-  if (config.proxyApiKeys.length === 0) return next();
+  if (proxyKeyStore.count() === 0) return next();
   const auth = req.get('authorization') || '';
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
   const token = bearer || req.get('x-api-key') || '';
-  if (token && config.proxyApiKeys.includes(token)) return next();
+  if (token) {
+    const pk = proxyKeyStore.verify(token);
+    if (pk) {
+      req.proxyKeyId = pk.id;
+      return next();
+    }
+  }
   return res.status(401).json({ error: { message: '无效的 API Key', type: 'invalid_request_error', code: 'invalid_api_key' } });
 }
 
@@ -124,9 +133,9 @@ export async function forwardWithFailover(pathName, body, {
   return { ok: false, status, message, reqId, tried: tried.size };
 }
 
-async function handleForward(req, res, pathName, mergeDefaults) {
+async function handleForward(req, res, pathName, mergeDefaults, track = false) {
   const clientBody = req.body || {};
-  const body = mergeDefaults ? mergeModelParams(clientBody) : clientBody;
+  let body = mergeDefaults ? mergeModelParams(clientBody) : clientBody;
   const extraHeaders = pickForwardHeaders(req);
   const wantStream = body.stream === true;
   const injected = mergeDefaults && body !== clientBody
@@ -135,9 +144,15 @@ async function handleForward(req, res, pathName, mergeDefaults) {
   if (injected.length) {
     log.debug('proxy', `${pathName} 注入字段`, { injected });
   }
+  // 流式 chat 请求且客户端未指定时注入 include_usage，保证最后一个 chunk 带上 usage 供统计。
+  if (track && pathName === '/chat/completions' && wantStream && !body.stream_options?.include_usage) {
+    body = { ...body, stream_options: { ...(body.stream_options || {}), include_usage: true } };
+    log.debug('proxy', `${pathName} 注入 stream_options.include_usage`);
+  }
 
   const result = await forwardWithFailover(pathName, body, { extraHeaders });
   if (!result.ok) {
+    if (track && req.proxyKeyId) proxyKeyStore.recordFailure(req.proxyKeyId);
     return res.status(result.status).json({ error: { message: result.message, type: 'gateway_error' } });
   }
 
@@ -155,22 +170,45 @@ async function handleForward(req, res, pathName, mergeDefaults) {
       log.warn('proxy', `流式传输中断：${err.message} [${result.reqId}]`);
       if (!res.writableEnded) res.end();
     });
+    // 旁路嗅探 SSE 中的 usage，结束时累计到代理 Key（客户端断开也会结算一次）。
+    if (track && req.proxyKeyId) {
+      const scanner = createSseUsageScanner();
+      let settled = false;
+      const finalize = () => {
+        if (settled) return;
+        settled = true;
+        proxyKeyStore.recordUsage(req.proxyKeyId, scanner.result());
+      };
+      nodeStream.on('data', (chunk) => scanner.push(chunk.toString('utf8')));
+      nodeStream.on('end', finalize);
+      nodeStream.on('close', finalize);
+    }
     nodeStream.pipe(res);
     return;
   }
-  res.send(Buffer.from(await result.response.arrayBuffer()));
+
+  const buffer = Buffer.from(await result.response.arrayBuffer());
+  if (track && req.proxyKeyId) {
+    let usage = null;
+    try {
+      usage = extractUsage(JSON.parse(buffer.toString('utf8')));
+    } catch {}
+    proxyKeyStore.recordUsage(req.proxyKeyId, usage);
+  }
+  res.send(buffer);
 }
 
 export function createProxyRouter() {
   const router = express.Router();
   router.use(proxyAuth);
 
-  router.post('/chat/completions', (req, res) => handleForward(req, res, '/chat/completions', true));
-  router.post('/completions', (req, res) => handleForward(req, res, '/completions', true));
+  // 聊天接口开启按代理 Key 的用量统计；embeddings / images / count_tokens 不统计。
+  router.post('/chat/completions', (req, res) => handleForward(req, res, '/chat/completions', true, true));
+  router.post('/completions', (req, res) => handleForward(req, res, '/completions', true, true));
   router.post('/embeddings', (req, res) => handleForward(req, res, '/embeddings', false));
-  router.post('/messages', (req, res) => handleForward(req, res, '/messages', true));
+  router.post('/messages', (req, res) => handleForward(req, res, '/messages', true, true));
   router.post('/messages/count_tokens', (req, res) => handleForward(req, res, '/messages/count_tokens', true));
-  router.post('/responses', (req, res) => handleForward(req, res, '/responses', true));
+  router.post('/responses', (req, res) => handleForward(req, res, '/responses', true, true));
   router.post('/images/generations', (req, res) => handleForward(req, res, '/images/generations', true));
   router.post('/images/edits', (req, res) => handleForward(req, res, '/images/edits', true));
 

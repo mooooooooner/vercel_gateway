@@ -43,5 +43,6 @@ export const config = {
   upstreamProxyUrl: process.env.UPSTREAM_PROXY_URL || '',
   lowBalanceThreshold: Number(process.env.LOW_BALANCE_THRESHOLD ?? 0.01),
   debug: /^(1|true|yes|on)$/i.test(process.env.DEBUG || ''),
-  dataDir: path.join(ROOT, 'data'),
+  // 数据目录可用 DATA_DIR 覆盖（默认 <项目根>/data）
+  dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data'),
 };

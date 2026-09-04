@@ -5,6 +5,7 @@ import path from 'node:path';
 import { config, ROOT } from './config.js';
 import { createAdminRouter } from './admin.js';
 import { createProxyRouter } from './proxy.js';
+import { proxyKeyStore } from './proxy-keys.js';
 import { log } from './logger.js';
 
 const app = express();
@@ -26,7 +27,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/api/meta', (req, res) => {
   res.json({
     requiresAdminToken: Boolean(config.adminToken),
-    proxyAuthEnabled: config.proxyApiKeys.length > 0,
+    proxyAuthEnabled: proxyKeyStore.count() > 0,
     gatewayBaseUrl: config.gatewayBaseUrl,
     lowBalanceThreshold: config.lowBalanceThreshold,
     debug: log.debugEnabled,
@@ -82,14 +83,24 @@ const server = httpsEnabled
   : app;
 const protocol = httpsEnabled ? 'https' : 'http';
 
+// 退出前把未落盘的代理 Key 统计写回（exit 回调里只能做同步操作，saveNow 为同步写）
+process.on('exit', () => proxyKeyStore.flush());
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    proxyKeyStore.flush();
+    process.exit(0);
+  });
+}
+
 server.listen(config.port, () => {
   console.log(`\n  Vercel Gateway Manager 已启动`);
   console.log(`  ▸ 管理后台:  ${protocol}://localhost:${config.port}`);
   console.log(`  ▸ 代理端点:  ${protocol}://localhost:${config.port}/v1`);
   console.log(`  ▸ 上游地址:  ${config.gatewayBaseUrl}`);
   if (config.upstreamProxyUrl) console.log(`  ▸ 上游代理:  ${config.upstreamProxyUrl}`);
+  console.log(`  ▸ 代理 Key:  ${proxyKeyStore.count()} 个（后台「代理 Key」页管理）`);
   if (!config.adminToken) console.log('  ⚠ 未设置 ADMIN_TOKEN，管理后台无鉴权！');
-  if (config.proxyApiKeys.length === 0) console.log('  ⚠ 未设置 PROXY_API_KEYS，代理接口无鉴权！');
+  if (proxyKeyStore.count() === 0) console.log('  ⚠ 未配置任何代理 Key，代理接口无鉴权！');
   console.log('');
   log.info('system', `服务已启动，${protocol.toUpperCase()} 端口 ${config.port}，Debug=${config.debug ? '开' : '关'}`);
 });
