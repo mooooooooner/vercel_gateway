@@ -46,7 +46,7 @@ function mergeModelParams(clientBody) {
 }
 
 const RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504]);
-const COOLDOWN_MS = 60_000; // 429 限流后该 key 冷却 1 分钟，期间不再优先选中
+const COOLDOWN_MS = 90_000; // 429 限流后该 key 冷却 1 分钟，期间不再优先选中
 
 const EXTRA_MODELS = [
   {
