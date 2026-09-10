@@ -335,11 +335,13 @@ function renderProxyKeys() {
         <label class="switch"><input type="checkbox" class="pk-enable" ${k.enabled ? 'checked' : ''} /><span></span></label>
       </td>
       <td style="white-space:nowrap">
+        <button class="btn mini ghost pk-rename">改名</button>
         <button class="btn mini ghost pk-copy">复制</button>
         <button class="btn mini danger ghost pk-del">删除</button>
       </td>
     </tr>`).join('');
 
+  body.querySelectorAll('.pk-rename').forEach((b) => b.addEventListener('click', onPkRename));
   body.querySelectorAll('.pk-del').forEach((b) => b.addEventListener('click', onPkDelete));
   body.querySelectorAll('.pk-enable').forEach((b) => b.addEventListener('change', onPkToggle));
   body.querySelectorAll('.pk-copy').forEach((b) => b.addEventListener('click', onPkCopy));
@@ -443,6 +445,37 @@ async function onPkCopy(e) {
     }
   } catch (err) { if (err.message !== 'unauthorized') toast(err.message, 'err'); }
 }
+
+let pkRenameTarget = null;
+
+function onPkRename(e) {
+  const id = e.target.closest('tr').dataset.id;
+  const k = state.pkeys.find((x) => x.id === id);
+  if (!k) return;
+  pkRenameTarget = k;
+  $('#pk-rename-masked').textContent = k.keyMasked;
+  $('#pk-rename-input').value = k.name || '';
+  openModal('modal-pk-rename');
+  $('#pk-rename-input').focus();
+  $('#pk-rename-input').select();
+}
+
+async function submitPkRename() {
+  if (!pkRenameTarget) return;
+  try {
+    await api('/api/proxy-keys/' + pkRenameTarget.id, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: $('#pk-rename-input').value.trim() }),
+    });
+    pkRenameTarget = null;
+    closeModal('modal-pk-rename');
+    toast('已保存名称', 'ok');
+    loadProxyKeys();
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+$('#pk-rename-submit').addEventListener('click', submitPkRename);
+$('#pk-rename-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPkRename(); });
 
 // 令牌
 $('#btn-token').addEventListener('click', () => { $('#token-input').value = state.token; openModal('modal-token'); });

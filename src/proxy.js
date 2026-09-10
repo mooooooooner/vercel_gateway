@@ -18,6 +18,7 @@ function proxyAuth(req, res, next) {
     const pk = proxyKeyStore.verify(token);
     if (pk) {
       req.proxyKeyId = pk.id;
+      req.proxyKeyLabel = pk.name || maskKey(pk.key);
       return next();
     }
   }
@@ -89,20 +90,23 @@ export async function forwardWithFailover(pathName, body, {
   method = 'POST',
   timeoutMs,
   scope = 'proxy',
+  proxyLabel = '',
 } = {}) {
   const reqId = Math.random().toString(36).slice(2, 8);
   const tried = new Set();
   const maxAttempts = Math.min(store.pickCandidates().length || 1, 5);
   let lastErr = null;
+  const pkPrefix = proxyLabel ? `代理「${proxyLabel}」→ ` : '';
+  const modelTag = `model=${body?.model || '?'}`;
 
-  log.debug(scope, `${pathName} ← model=${body?.model || '?'} stream=${body?.stream === true} [${reqId}]`);
+  log.debug(scope, `${pkPrefix}${pathName} ← ${modelTag} stream=${body?.stream === true} [${reqId}]`);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const k = store.nextKey(tried);
     if (!k) break;
     tried.add(k.id);
     const label = k.name || maskKey(k.key);
-    log.debug(scope, `尝试 #${attempt + 1} 使用 key「${label}」[${reqId}]`);
+    log.debug(scope, `${pkPrefix}key「${label}」 ${modelTag} 尝试 #${attempt + 1} [${reqId}]`);
     try {
       const upstream = await forward(k.key, pathName, body, { method, extraHeaders, timeoutMs });
 
@@ -111,17 +115,17 @@ export async function forwardWithFailover(pathName, body, {
         store.update(k.id, { failures: (k.failures || 0) + 1, lastError: `HTTP ${upstream.status}`, ...patch });
         lastErr = { status: upstream.status, body: await upstream.text().catch(() => '') };
         const note = patch.status ? { marked: patch.status } : (patch.cooldownUntil ? { cooldown: `${COOLDOWN_MS / 1000}s` } : undefined);
-        log.warn(scope, `key「${label}」返回 ${upstream.status}，切换下一个 [${reqId}]`, note);
+        log.warn(scope, `${pkPrefix}key「${label}」 ${modelTag} 返回 ${upstream.status}，切换下一个 [${reqId}]`, note);
         continue;
       }
 
       store.update(k.id, { requests: (k.requests || 0) + 1, lastUsed: Date.now() });
-      log.info(scope, `key「${label}」→ ${upstream.status} ${body?.stream ? '(流式)' : ''} [${reqId}]`);
+      log.info(scope, `${pkPrefix}key「${label}」 ${modelTag} → ${upstream.status} ${body?.stream ? '(流式)' : ''} [${reqId}]`);
       return { ok: true, status: upstream.status, response: upstream, key: k, reqId };
     } catch (err) {
       store.update(k.id, { failures: (k.failures || 0) + 1, lastError: String(err.message || err) });
       lastErr = { status: 502, body: String(err.message || err) };
-      log.warn(scope, `key「${label}」转发异常：${err.message} [${reqId}]`);
+      log.warn(scope, `${pkPrefix}key「${label}」 ${modelTag} 转发异常：${err.message} [${reqId}]`);
     }
   }
 
@@ -150,7 +154,7 @@ async function handleForward(req, res, pathName, mergeDefaults, track = false) {
     log.debug('proxy', `${pathName} 注入 stream_options.include_usage`);
   }
 
-  const result = await forwardWithFailover(pathName, body, { extraHeaders });
+  const result = await forwardWithFailover(pathName, body, { extraHeaders, proxyLabel: req.proxyKeyLabel });
   if (!result.ok) {
     if (track && req.proxyKeyId) proxyKeyStore.recordFailure(req.proxyKeyId);
     return res.status(result.status).json({ error: { message: result.message, type: 'gateway_error' } });

@@ -291,6 +291,19 @@
     </div>
   </div>
 
+  <!-- 代理 Key 改名弹窗 -->
+  <div class="modal" id="modal-pk-rename" hidden>
+    <div class="modal-box">
+      <h2>重命名代理 Key</h2>
+      <p class="hint" id="pk-rename-masked"></p>
+      <label class="field">名称<input type="text" id="pk-rename-input" maxlength="50" placeholder="例如 client-a，留空为未命名" /></label>
+      <div class="modal-actions">
+        <button class="btn ghost" data-close>取消</button>
+        <button class="btn primary" id="pk-rename-submit">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 图片预览弹窗 -->
   <div class="modal" id="modal-image" hidden>
     <div class="modal-box image-preview-box">
