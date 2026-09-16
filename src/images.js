@@ -7,6 +7,31 @@ import { log } from './logger.js';
 export const DEFAULT_IMAGE_MODEL = 'bytedance/seedream-5.0-pro';
 const MAX_REFERENCES = 8;
 const MAX_REF_BYTES = 8 * 1024 * 1024;
+const DEFAULT_IMAGE_SIZE = '2048x2048';
+
+// 上游 size 仅接受 WIDTHxHEIGHT 或受支持的预设，这里把界面预设/比例统一归一化为具体尺寸。
+const IMAGE_SIZE_PRESETS = {
+  '1k': '1024x1024',
+  '2k': '2048x2048',
+  '4k': '4096x4096',
+  '1:1': '2048x2048',
+  '16:9': '2560x1440',
+  '9:16': '1440x2560',
+  '4:3': '2304x1728',
+  '3:4': '1728x2304',
+  '3:2': '2496x1664',
+  '2:3': '1664x2496',
+};
+
+function normalizeImageSize(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return DEFAULT_IMAGE_SIZE;
+  const dims = value.match(/^(\d{2,5})\s*[xX*×]\s*(\d{2,5})$/);
+  if (dims) return `${Number(dims[1])}x${Number(dims[2])}`;
+  const preset = IMAGE_SIZE_PRESETS[value.toLowerCase()];
+  if (preset) return preset;
+  throw new Error(`尺寸无效：「${value}」需为 WIDTHxHEIGHT（如 1024x1024）或 1K/2K/4K、16:9 等预设`);
+}
 
 function publicFile(item, file, index, kind) {
   const qs = kind === 'ref' ? `kind=ref&index=${index}` : `index=${index}`;
@@ -144,7 +169,12 @@ export function attachImageRoutes(router) {
     if (!prompt) return res.status(400).json({ error: { message: '请输入提示词' } });
 
     const model = String(req.body?.model || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
-    const size = String(req.body?.size || '2K').trim() || '2K';
+    let size;
+    try {
+      size = normalizeImageSize(req.body?.size);
+    } catch (err) {
+      return res.status(400).json({ error: { message: String(err.message || err) } });
+    }
     const nRaw = Number(req.body?.n);
     const n = Number.isFinite(nRaw) ? Math.min(4, Math.max(1, Math.round(nRaw))) : 1;
 
