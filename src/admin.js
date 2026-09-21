@@ -102,7 +102,7 @@ export function createAdminRouter() {
   // 设置（负载均衡策略 + 按模型参数）
   router.get('/settings', (req, res) => res.json(store.getSettings()));
   router.put('/settings', (req, res) => {
-    const { strategy, modelParams } = req.body || {};
+    const { strategy, modelParams, modelEnabled } = req.body || {};
     const valid = ['round-robin', 'least-used', 'random', 'highest-balance', 'lowest-balance'];
     const patch = {};
     if (strategy) {
@@ -123,6 +123,12 @@ export function createAdminRouter() {
         cleaned[id] = params;
       }
       patch.modelParams = cleaned;
+    }
+    if (modelEnabled !== undefined) {
+      if (typeof modelEnabled !== 'object' || Array.isArray(modelEnabled)) {
+        return res.status(400).json({ error: { message: 'modelEnabled 必须为对象' } });
+      }
+      patch.modelEnabled = modelEnabled;
     }
     res.json(store.setSettings(patch));
   });

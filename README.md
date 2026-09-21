@@ -10,6 +10,7 @@
 - ✅ **一键清理额度不足**：先刷新再自动删除「余额不足 / 失效」的 Key
 - ✅ **激活选中 Key**：对勾选的 Key 调用 `zai/glm-5.2` 发送极短测试消息，触发上游激活
 - ✅ **默认参数自定义**：以 JSON 配置注入 chat/completions 默认参数（可留空）
+- ✅ **模型启用开关**：后台「模型参数」页为每个模型单独启用 / 停用，`/v1/models` 仅返回已配置且已启用的模型 id
 - ✅ **优雅前端**：Anthropic 官网风格（暖米色 + 陶土红 + 衬线标题）
 - ✅ **负载均衡**：轮询 / 最少使用 / 余额优先 / 低额度优先 / 随机，失败自动切换下一个 Key
 - ✅ **Debug 模式 + 实时日志**：前端「运行日志」选项卡通过 SSE 实时查看每次代理的 key 选择、上游状态、重试与异常；Debug 可在页面随时开关
@@ -64,14 +65,14 @@ print(resp.choices[0].message.content)
 - `POST /v1/embeddings`
 - `POST /v1/images/generations`
 - `POST /v1/images/edits`
-- `GET  /v1/models`
+- `GET  /v1/models`（仅返回后台「模型参数」页里已配置且已启用的模型）
 
 ## 管理 API（需 `x-admin-token` 或 `Authorization: Bearer <ADMIN_TOKEN>`）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/stats` | 概览统计 |
-| GET/PUT | `/api/settings` | 负载策略与默认参数 |
+| GET/PUT | `/api/settings` | 负载策略、按模型默认参数（`modelParams`）与模型启用开关（`modelEnabled`） |
 | GET | `/api/keys` | Key 列表（脱敏） |
 | POST | `/api/keys` | 批量添加 `{ text, namePrefix? }` |
 | POST | `/api/keys/delete` | 批量删除 `{ ids }` |

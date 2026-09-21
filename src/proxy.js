@@ -67,13 +67,16 @@ function markKey(k, status) {
   return {};
 }
 
-function addExtraModels(data) {
-  if (!data || !Array.isArray(data.data)) return data;
-  const existing = new Set(data.data.map((m) => m?.id).filter(Boolean));
-  for (const model of EXTRA_MODELS) {
-    if (!existing.has(model.id)) data.data.push(model);
-  }
-  return data;
+// 仅保留已配置且启用的模型，并尽量用上游元数据补全字段；
+// 上游未返回的模型回退到内置定义或最小占位。
+function buildModelList(ids, upstreamModels) {
+  return ids.map((id) => upstreamModels.get(id)
+    || EXTRA_MODELS.find((m) => m.id === id)
+    || {
+      id,
+      object: 'model',
+      owned_by: id.includes('/') ? id.split('/')[0] : 'gateway',
+    });
 }
 
 function snippet(text, max = 400) {
@@ -216,23 +219,27 @@ export function createProxyRouter() {
   router.post('/images/generations', (req, res) => handleForward(req, res, '/images/generations', true));
   router.post('/images/edits', (req, res) => handleForward(req, res, '/images/edits', true));
 
-  // 模型列表：用任一可用 key 查询上游
+  // 模型列表：仅返回后台「模型参数」页里已配置且启用的模型。
+  // 尽量用上游元数据补全字段，但上游不可用时也照常返回本地配置。
   router.get('/models', async (req, res) => {
+    const ids = store.enabledModelIds();
+    const upstreamModels = new Map();
     const k = store.nextKey();
-    if (!k) return res.status(503).json({ error: { message: '没有可用的 key' } });
-    try {
-      const upstream = await forward(k.key, '/models', null, { method: 'GET' });
-      res.status(upstream.status);
-      const ct = upstream.headers.get('content-type');
-      if (ct) res.setHeader('Content-Type', ct);
-      if (upstream.ok && ct?.includes('application/json')) {
-        const data = await upstream.json();
-        return res.json(addExtraModels(data));
+    if (k) {
+      try {
+        const upstream = await forward(k.key, '/models', null, { method: 'GET' });
+        const ct = upstream.headers.get('content-type') || '';
+        if (upstream.ok && ct.includes('application/json')) {
+          const data = await upstream.json();
+          for (const m of Array.isArray(data?.data) ? data.data : []) {
+            if (m?.id) upstreamModels.set(m.id, m);
+          }
+        }
+      } catch (err) {
+        log.warn('proxy', `查询上游 /models 失败：${err.message}`);
       }
-      res.send(Buffer.from(await upstream.arrayBuffer()));
-    } catch (err) {
-      res.status(502).json({ error: { message: String(err.message || err) } });
     }
+    res.json({ object: 'list', data: buildModelList(ids, upstreamModels) });
   });
 
   return router;

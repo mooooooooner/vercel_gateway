@@ -12,6 +12,9 @@ const DEFAULT_SETTINGS = {
   strategy: 'round-robin',
   // 按模型注入的请求体参数。客户端未带同名顶层字段时才补上。
   modelParams: {},
+  // 按模型的启用开关：{ [modelId]: boolean }。仅作为 /v1/models 的过滤依据，
+  // 未显式记录的模型视为启用。
+  modelEnabled: {},
 };
 
 function normalizeSettings(raw) {
@@ -19,6 +22,9 @@ function normalizeSettings(raw) {
   delete settings.defaultParams;
   if (!settings.modelParams || typeof settings.modelParams !== 'object' || Array.isArray(settings.modelParams)) {
     settings.modelParams = {};
+  }
+  if (!settings.modelEnabled || typeof settings.modelEnabled !== 'object' || Array.isArray(settings.modelEnabled)) {
+    settings.modelEnabled = {};
   }
   return settings;
 }
@@ -165,10 +171,26 @@ class Store {
     return this.settings;
   }
 
+  // 已配置且启用的模型 id（用于 /v1/models）。未显式设置开关的模型默认启用。
+  enabledModelIds() {
+    const params = this.settings.modelParams || {};
+    const enabled = this.settings.modelEnabled || {};
+    return Object.keys(params).filter((id) => enabled[id] !== false);
+  }
+
   setSettings(patch) {
     if (patch.strategy) this.settings.strategy = patch.strategy;
     if (patch.modelParams && typeof patch.modelParams === 'object' && !Array.isArray(patch.modelParams)) {
       this.settings.modelParams = patch.modelParams;
+    }
+    if (patch.modelEnabled && typeof patch.modelEnabled === 'object' && !Array.isArray(patch.modelEnabled)) {
+      const cleaned = {};
+      for (const [modelId, on] of Object.entries(patch.modelEnabled)) {
+        const id = String(modelId || '').trim();
+        if (!id) continue;
+        cleaned[id] = Boolean(on);
+      }
+      this.settings.modelEnabled = cleaned;
     }
     this.saveSettings();
     return this.settings;

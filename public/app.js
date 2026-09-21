@@ -27,7 +27,7 @@ function newField(preset = {}) {
   };
 }
 
-function newCard(model = '', params = {}) {
+function newCard(model = '', params = {}, enabled = true) {
   const fields = Object.entries(params).map(([key, value]) => {
     if (value !== null && typeof value === 'object') {
       return newField({ key, type: 'json', value: JSON.stringify(value, null, 2) });
@@ -36,7 +36,7 @@ function newCard(model = '', params = {}) {
     if (typeof value === 'boolean') return newField({ key, type: 'boolean', value: String(value) });
     return newField({ key, type: 'string', value: value == null ? '' : String(value) });
   });
-  return { id: Math.random().toString(36).slice(2, 8), model, fields };
+  return { id: Math.random().toString(36).slice(2, 8), model, enabled, fields };
 }
 
 // ---------- HTTP ----------
@@ -137,7 +137,8 @@ async function loadAll() {
      $('#strategy').value = settings.strategy;
     state.settings = settings;
     if (!state.paramCards.length) {
-      state.paramCards = Object.entries(settings.modelParams || {}).map(([model, params]) => newCard(model, params));
+      state.paramCards = Object.entries(settings.modelParams || {}).map(([model, params]) =>
+        newCard(model, params, settings.modelEnabled?.[model] !== false));
     }
     renderParamCards();
   } catch (e) { if (e.message !== 'unauthorized') toast(e.message, 'err'); }
@@ -524,6 +525,10 @@ function renderParamCards() {
         <label class="field model-field">模型 ID
           <input type="text" class="param-model" value="${escapeHtml(card.model)}" placeholder="例如 xai/grok-4" />
         </label>
+        <label class="switch-inline param-enable-wrap">
+          <span class="param-enable-label">${card.enabled ? '已启用' : '已停用'}</span>
+          <label class="switch"><input type="checkbox" class="param-enable-input" ${card.enabled ? 'checked' : ''} /><span></span></label>
+        </label>
         <div class="param-card-actions">
           <button class="btn mini ghost param-dup">复制</button>
           <button class="btn mini danger ghost param-del">删除</button>
@@ -542,9 +547,14 @@ function renderParamCards() {
     const card = state.paramCards.find((c) => c.id === el.dataset.card);
     if (!card) return;
     el.querySelector('.param-model').addEventListener('input', (e) => { card.model = e.target.value; });
+    el.querySelector('.param-enable-input').addEventListener('change', (e) => {
+      card.enabled = e.target.checked;
+      const label = el.querySelector('.param-enable-label');
+      if (label) label.textContent = card.enabled ? '已启用' : '已停用';
+    });
     el.querySelector('.param-dup').addEventListener('click', () => {
       const collected = collectCardParams(card);
-      state.paramCards.push(newCard(card.model ? `${card.model}-copy` : '', collected.params || {}));
+      state.paramCards.push(newCard(card.model ? `${card.model}-copy` : '', collected.params || {}, card.enabled));
       renderParamCards();
     });
     el.querySelector('.param-del').addEventListener('click', () => {
@@ -640,6 +650,7 @@ $('#btn-add-model').addEventListener('click', () => {
 $('#btn-save-params').addEventListener('click', async () => {
   const errEl = $('#params-error');
   const modelParams = {};
+  const modelEnabled = {};
   for (const card of state.paramCards) {
     const model = card.model.trim();
     if (!model) { errEl.textContent = '存在未填写的模型 ID'; errEl.hidden = false; return; }
@@ -647,11 +658,13 @@ $('#btn-save-params').addEventListener('click', async () => {
     const collected = collectCardParams(card);
     if (collected.error) { errEl.textContent = collected.error; errEl.hidden = false; return; }
     modelParams[model] = collected.params;
+    modelEnabled[model] = card.enabled !== false;
   }
   try {
-    const settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ modelParams }) });
+    const settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ modelParams, modelEnabled }) });
     state.settings = settings;
-    state.paramCards = Object.entries(settings.modelParams || {}).map(([model, params]) => newCard(model, params));
+    state.paramCards = Object.entries(settings.modelParams || {}).map(([model, params]) =>
+      newCard(model, params, settings.modelEnabled?.[model] !== false));
     errEl.hidden = true;
     renderParamCards();
     toast('模型参数已保存', 'ok');

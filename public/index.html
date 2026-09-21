@@ -153,6 +153,7 @@
             <p class="hint">
               每个模型单独配置请求体字段。转发时仅当客户端未传同名<strong>顶层</strong>字段才注入。
               适用于 <code>/v1/chat/completions</code>、<code>/v1/completions</code>、<code>/v1/messages</code>、<code>/v1/responses</code>。
+              右侧开关控制模型是否启用，<code>/v1/models</code> 仅返回已配置且已启用的模型。
             </p>
           </div>
           <div class="toolbar-right">
@@ -331,6 +332,6 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <script src="/app.js?v=20260904-proxy-keys"></script>
+  <script src="/app.js?v=20260921-model-enabled"></script>
 </body>
 </html>
