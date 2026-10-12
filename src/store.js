@@ -15,7 +15,28 @@ const DEFAULT_SETTINGS = {
   // 按模型的启用开关：{ [modelId]: boolean }。仅作为 /v1/models 的过滤依据，
   // 未显式记录的模型视为启用。
   modelEnabled: {},
+  // 搜索 API（/v1/search 与 perplexity/search 等别名）默认配置。
+  // model: 执行搜索时用的底层对话模型；provider: 默认搜索供应商；maxResults: 默认结果数。
+  search: {
+    model: 'zai/glm-5.2',
+    provider: 'perplexity',
+    maxResults: 10,
+  },
 };
+
+function normalizeSearch(raw) {
+  const d = DEFAULT_SETTINGS.search;
+  const s = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  const maxResults = Number(s.maxResults);
+  return {
+    model: typeof s.model === 'string' && s.model.trim() ? s.model.trim() : d.model,
+    provider: typeof s.provider === 'string' && s.provider.trim() ? s.provider.trim().toLowerCase() : d.provider,
+    // 越界值钳制到 [1, 20]，非法值回退默认
+    maxResults: Number.isFinite(maxResults) && maxResults >= 1
+      ? Math.min(20, Math.floor(maxResults))
+      : d.maxResults,
+  };
+}
 
 function normalizeSettings(raw) {
   const settings = { ...DEFAULT_SETTINGS, ...raw };
@@ -26,6 +47,7 @@ function normalizeSettings(raw) {
   if (!settings.modelEnabled || typeof settings.modelEnabled !== 'object' || Array.isArray(settings.modelEnabled)) {
     settings.modelEnabled = {};
   }
+  settings.search = normalizeSearch(settings.search);
   return settings;
 }
 
@@ -191,6 +213,9 @@ class Store {
         cleaned[id] = Boolean(on);
       }
       this.settings.modelEnabled = cleaned;
+    }
+    if (patch.search !== undefined) {
+      this.settings.search = normalizeSearch(patch.search);
     }
     this.saveSettings();
     return this.settings;

@@ -4,6 +4,7 @@ import { store, maskKey } from './store.js';
 import { proxyKeyStore } from './proxy-keys.js';
 import { extractUsage, createSseUsageScanner } from './usage.js';
 import { forward } from './gateway.js';
+import { SEARCH_PROVIDERS, rewriteSearchAliasBody, buildSearchRequestBody } from './search.js';
 import { log } from './logger.js';
 
 // 客户端代理鉴权：Authorization: Bearer 或 x-api-key。
@@ -57,6 +58,16 @@ const EXTRA_MODELS = [
     name: 'GLM 5.2',
     type: 'language',
   },
+  // Vercel 内置搜索工具的模型别名（详见 src/search.js）。
+  // 在后台「模型参数」页配置后即可出现在 /v1/models，客户端可将其作为
+  // chat/completions 的 model 直接调用。
+  ...Object.entries(SEARCH_PROVIDERS).map(([name, p]) => ({
+    id: `${name}/search`,
+    object: 'model',
+    owned_by: name,
+    name: p.label,
+    type: 'search',
+  })),
 ];
 
 // 根据上游状态码更新 key 状态
@@ -140,8 +151,9 @@ export async function forwardWithFailover(pathName, body, {
   return { ok: false, status, message, reqId, tried: tried.size };
 }
 
-async function handleForward(req, res, pathName, mergeDefaults, track = false) {
-  const clientBody = req.body || {};
+async function handleForward(req, res, pathName, mergeDefaults, track = false, bodyOverride = null) {
+  // bodyOverride：由 /v1/search 或搜索别名改写生成的请求体，替代客户端原始 body
+  const clientBody = bodyOverride ?? req.body ?? {};
   let body = mergeDefaults ? mergeModelParams(clientBody) : clientBody;
   const extraHeaders = pickForwardHeaders(req);
   const wantStream = body.stream === true;
@@ -210,7 +222,18 @@ export function createProxyRouter() {
   router.use(proxyAuth);
 
   // 聊天接口开启按代理 Key 的用量统计；embeddings / images / count_tokens 不统计。
-  router.post('/chat/completions', (req, res) => handleForward(req, res, '/chat/completions', true, true));
+  // model 为搜索别名（perplexity/search 等）时改写为「底层模型 + 搜索 server tool」再转发。
+  router.post('/chat/completions', (req, res) => {
+    const rewritten = rewriteSearchAliasBody(req.body || {});
+    if (rewritten?.error) {
+      return res.status(400).json({ error: { message: rewritten.error, type: 'invalid_request_error' } });
+    }
+    if (rewritten) {
+      log.debug('proxy', `搜索别名「${req.body.model}」→ ${rewritten.provider} + model=${rewritten.body.model} query=${snippet(rewritten.query, 120)}`);
+      return handleForward(req, res, '/chat/completions', true, true, rewritten.body);
+    }
+    handleForward(req, res, '/chat/completions', true, true);
+  });
   router.post('/completions', (req, res) => handleForward(req, res, '/completions', true, true));
   router.post('/embeddings', (req, res) => handleForward(req, res, '/embeddings', false));
   router.post('/messages', (req, res) => handleForward(req, res, '/messages', true, true));
@@ -218,6 +241,17 @@ export function createProxyRouter() {
   router.post('/responses', (req, res) => handleForward(req, res, '/responses', true, true));
   router.post('/images/generations', (req, res) => handleForward(req, res, '/images/generations', true));
   router.post('/images/edits', (req, res) => handleForward(req, res, '/images/edits', true));
+
+  // Vercel 搜索 API：POST /v1/search { query, provider?, model?, max_results?, ... }
+  // 内部转成 chat/completions + vercel:<provider>_search server tool，返回标准 chat 响应。
+  router.post('/search', (req, res) => {
+    const built = buildSearchRequestBody(req.body || {});
+    if (built.error) {
+      return res.status(400).json({ error: { message: built.error, type: 'invalid_request_error' } });
+    }
+    log.debug('proxy', `/search provider=${built.provider} model=${built.model} query=${snippet(built.query, 120)}`);
+    handleForward(req, res, '/chat/completions', true, true, built.body);
+  });
 
   // 模型列表：仅返回后台「模型参数」页里已配置且启用的模型。
   // 尽量用上游元数据补全字段，但上游不可用时也照常返回本地配置。

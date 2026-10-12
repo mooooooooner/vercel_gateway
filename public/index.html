@@ -147,6 +147,37 @@
 
       <!-- ============ 模型参数视图 ============ -->
       <div id="view-params" hidden>
+        <!-- 搜索 API 设置 -->
+        <section class="card params-toolbar search-toolbar">
+          <div>
+            <h2 class="params-title">搜索 API</h2>
+            <p class="hint">
+              客户端两种用法：① <code>POST /v1/search</code>，body 传 <code>{ "query": "…" , "provider": "perplexity" }</code>；
+              ② 直接在 <code>/v1/chat/completions</code> 用 <code>model: "perplexity/search"</code>（也支持
+              <code>exa/search</code>、<code>tako/search</code>、<code>browserbase/search</code>、<code>parallel/search</code>）。
+              网关会自动改写为「底层对话模型 + Vercel 搜索工具」，回答基于实时搜索结果。计费按上游搜索工具费率（如 Perplexity $5/千次）。
+            </p>
+          </div>
+          <div class="search-settings-grid">
+            <label class="field">底层对话模型
+              <input type="text" id="search-model" placeholder="zai/glm-5.2" />
+            </label>
+            <label class="field">默认供应商
+              <select id="search-provider">
+                <option value="perplexity">Perplexity Search</option>
+                <option value="exa">Exa Search</option>
+                <option value="tako">Tako Search</option>
+                <option value="browserbase">Browserbase Search</option>
+                <option value="parallel">Parallel Search</option>
+              </select>
+            </label>
+            <label class="field">默认结果数
+              <input type="number" id="search-max-results" min="1" max="20" value="10" />
+            </label>
+            <button class="btn primary" id="btn-save-search">保存搜索设置</button>
+          </div>
+        </section>
+
         <section class="card params-toolbar">
           <div>
             <h2 class="params-title">按模型默认参数</h2>
@@ -332,6 +363,6 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <script src="/app.js?v=20260921-model-enabled"></script>
+  <script src="/app.js?v=20261012-search-api"></script>
 </body>
 </html>

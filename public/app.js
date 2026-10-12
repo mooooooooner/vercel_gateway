@@ -136,6 +136,7 @@ async function loadAll() {
     renderKeys();
      $('#strategy').value = settings.strategy;
     state.settings = settings;
+    renderSearchSettings(settings.search);
     if (!state.paramCards.length) {
       state.paramCards = Object.entries(settings.modelParams || {}).map(([model, params]) =>
         newCard(model, params, settings.modelEnabled?.[model] !== false));
@@ -645,6 +646,30 @@ function collectCardParams(card) {
 $('#btn-add-model').addEventListener('click', () => {
   state.paramCards.push(newCard());
   renderParamCards();
+});
+
+// ================= 搜索 API 设置 =================
+function renderSearchSettings(search) {
+  const s = search || {};
+  $('#search-model').value = s.model || 'zai/glm-5.2';
+  $('#search-provider').value = s.provider || 'perplexity';
+  $('#search-max-results').value = s.maxResults || 10;
+}
+
+$('#btn-save-search').addEventListener('click', async () => {
+  const search = {
+    model: $('#search-model').value.trim() || 'zai/glm-5.2',
+    provider: $('#search-provider').value,
+    maxResults: Math.max(1, Math.min(20, Number($('#search-max-results').value) || 10)),
+  };
+  try {
+    const settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ search }) });
+    state.settings = settings;
+    renderSearchSettings(settings.search);
+    toast('搜索设置已保存', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
 });
 
 $('#btn-save-params').addEventListener('click', async () => {

@@ -99,10 +99,10 @@ export function createAdminRouter() {
     });
   });
 
-  // 设置（负载均衡策略 + 按模型参数）
+  // 设置（负载均衡策略 + 按模型参数 + 搜索 API 默认配置）
   router.get('/settings', (req, res) => res.json(store.getSettings()));
   router.put('/settings', (req, res) => {
-    const { strategy, modelParams, modelEnabled } = req.body || {};
+    const { strategy, modelParams, modelEnabled, search } = req.body || {};
     const valid = ['round-robin', 'least-used', 'random', 'highest-balance', 'lowest-balance'];
     const patch = {};
     if (strategy) {
@@ -129,6 +129,12 @@ export function createAdminRouter() {
         return res.status(400).json({ error: { message: 'modelEnabled 必须为对象' } });
       }
       patch.modelEnabled = modelEnabled;
+    }
+    if (search !== undefined) {
+      if (typeof search !== 'object' || Array.isArray(search)) {
+        return res.status(400).json({ error: { message: 'search 必须为对象' } });
+      }
+      patch.search = search;
     }
     res.json(store.setSettings(patch));
   });

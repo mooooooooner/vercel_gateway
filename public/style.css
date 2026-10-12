@@ -184,6 +184,19 @@ tbody tr:hover { background: var(--surface-2); }
 .param-field textarea.param-value { min-height: 84px; }
 .param-add-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
+/* 搜索 API 设置 */
+.search-toolbar { align-items: stretch; }
+.search-toolbar .hint { max-width: 720px; }
+.search-settings-grid {
+  display: grid; grid-template-columns: minmax(200px, 1.4fr) minmax(160px, 1fr) 110px auto;
+  gap: 12px; align-items: end;
+}
+.search-settings-grid .field { margin-top: 0; }
+.search-settings-grid .btn { height: 38px; white-space: nowrap; }
+@media (max-width: 900px) {
+  .search-settings-grid { grid-template-columns: 1fr 1fr; }
+}
+
 /* 日志视图 */
 .log-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; margin-bottom: 16px; flex-wrap: wrap; }
 .log-toolbar label { font-size: 12.5px; color: var(--ink-soft); }
